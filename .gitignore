@@ -1,0 +1,19 @@
+# Environnement virtuel
+venv/
+/venv/
+
+# Fichiers temporaires et cache Python
+__pycache__/
+*.pyc
+
+# Dossiers de données et de sortie (qui peuvent contenir des infos sensibles)
+data/
+temp_data/
+output_devis/
+
+# Fichiers de configuration VS Code
+.vscode/
+
+# Fichiers de système d'exploitation
+.DS_Store
+Thumbs.db
