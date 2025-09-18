@@ -27,7 +27,7 @@ except (FileNotFoundError, KeyError):
 
 
 # URL de l'API Hugging Face et nom du modèle Ollama
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+HF_API_URL = "https://api-inference.huggingface.co/models/OpenAssistant/oasst-sft-4-pythia-12b-epoch-3.5"
 OLLAMA_MODEL = "qwen3:8b" 
 
 def extract_text_from_pdf(pdf_path):
@@ -79,9 +79,16 @@ def structure_data_with_llm(text_content):
     if LLM_PROVIDER == "huggingface":
         print("INFO: Appel à l'API Hugging Face (mode en ligne)...")
         headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        # Formatage spécifique pour les modèles de type OpenAssistant
+        formatted_prompt = f"<|prompter|>{prompt}<|endoftext|><|assistant|>"
+
         payload = {
-            "inputs": prompt,
-            "parameters": {"max_new_tokens": 1024, "temperature": 0.1, "return_full_text": False}
+            "inputs": formatted_prompt,
+            "parameters": {
+                "max_new_tokens": 1024,
+                "temperature": 0.1,
+                "return_full_text": False
+            }
         }
         try:
             response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
