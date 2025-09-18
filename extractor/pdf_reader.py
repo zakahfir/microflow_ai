@@ -2,9 +2,33 @@
 import fitz  # PyMuPDF
 import os
 import ollama
+import requests
 import json
+import streamlit as st # Nécessaire pour accéder aux secrets
 
-LLM_MODEL = "qwen3:8b"  # Modèle LLM à utiliser
+# --- Configuration ---
+LLM_PROVIDER = "none" # Par défaut, aucun fournisseur n'est configuré
+
+# On essaie de récupérer la clé API depuis les secrets de Streamlit.
+# Cette partie ne fonctionnera que lorsque le code tourne sur Streamlit Cloud.
+try:
+    if "HUGGINGFACE_API_KEY" in st.secrets:
+        HF_TOKEN = st.secrets["HUGGINGFACE_API_KEY"]
+        LLM_PROVIDER = "huggingface"
+        print("INFO: Clé API Hugging Face trouvée. L'application utilisera l'API en ligne.")
+    else:
+        LLM_PROVIDER = "ollama"
+        print("INFO: Pas de clé API Hugging Face détectée. L'application utilisera Ollama en local.")
+except (FileNotFoundError, KeyError):
+    # Cette erreur se produit quand on lance le script en local (pas dans Streamlit)
+    # et que 'st.secrets' n'existe pas. C'est normal.
+    LLM_PROVIDER = "ollama"
+    print("INFO: Lancement en local. L'application utilisera Ollama.")
+
+
+# URL de l'API Hugging Face et nom du modèle Ollama
+HF_API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3.1-8B-Instruct"
+OLLAMA_MODEL = "qwen3:8b" 
 
 def extract_text_from_pdf(pdf_path):
     if not os.path.exists(pdf_path):
@@ -51,14 +75,41 @@ def structure_data_with_llm(text_content):
     {text_content}
     ---
     """
-    try:
-        response = ollama.chat(
-            model=LLM_MODEL,
-            messages=[{'role': 'user', 'content': prompt}],
-            format="json"
-        )
-        print("SUCCÈS: Réponse structurée reçue du LLM.")
-        return json.loads(response['message']['content'])
-    except Exception as e:
-        print(f"ERREUR: Problème de communication avec Ollama : {e}")
+    # C'est ici que notre code devient "intelligent"
+    if LLM_PROVIDER == "huggingface":
+        print("INFO: Appel à l'API Hugging Face (mode en ligne)...")
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": 1024, "temperature": 0.1, "return_full_text": False}
+        }
+        try:
+            response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            generated_json_text = response.json()[0]['generated_text']
+            print("SUCCÈS: Réponse reçue de Hugging Face.")
+            return json.loads(generated_json_text)
+        except Exception as e:
+            print(f"ERREUR (Hugging Face): {e}")
+            st.error(f"Erreur de communication avec le service IA en ligne. Détails : {e}")
+            return None
+
+    elif LLM_PROVIDER == "ollama":
+        print("INFO: Appel à Ollama (mode local)...")
+        try:
+            response = ollama.chat(
+                model=OLLAMA_MODEL,
+                messages=[{'role': 'user', 'content': prompt}],
+                format="json"
+            )
+            print("SUCCÈS: Réponse reçue d'Ollama.")
+            return json.loads(response['message']['content'])
+        except Exception as e:
+            print(f"ERREUR (Ollama): {e}")
+            st.error(f"Erreur de communication avec l'IA locale. Ollama est-il bien lancé ? Détails : {e}")
+            return None
+
+    else:
+        print("ERREUR: Aucun fournisseur LLM n'est configuré.")
+        st.error("Le service d'intelligence artificielle n'est pas configuré.")
         return None
