@@ -1,38 +1,39 @@
 # microflow_ai/extractor/pdf_reader.py
-import fitz  # PyMuPDF
+
 import os
-import ollama
-import requests
 import json
-import streamlit as st # Nécessaire pour accéder aux secrets
+import fitz
+import streamlit as st
+
+# On importe le client officiel, plus fiable
+from huggingface_hub import InferenceClient
 
 # --- Configuration ---
-LLM_PROVIDER = "none" # Par défaut, aucun fournisseur n'est configuré
+LLM_PROVIDER = "none"
+HF_TOKEN = None
 
-# On essaie de récupérer la clé API depuis les secrets de Streamlit.
-# Cette partie ne fonctionnera que lorsque le code tourne sur Streamlit Cloud.
+# Logique de détection de l'environnement (Cloud vs Local)
 try:
     if "HUGGINGFACE_API_KEY" in st.secrets:
         HF_TOKEN = st.secrets["HUGGINGFACE_API_KEY"]
         LLM_PROVIDER = "huggingface"
         print("INFO: Clé API Hugging Face trouvée. L'application utilisera l'API en ligne.")
     else:
-        LLM_PROVIDER = "ollama"
-        print("INFO: Pas de clé API Hugging Face détectée. L'application utilisera Ollama en local.")
+        # Si on est dans Streamlit mais sans secret, on ne peut rien faire.
+        LLM_PROVIDER = "none"
+        st.error("ERREUR DE CONFIGURATION : Clé API Hugging Face non trouvée dans les secrets Streamlit.")
 except (FileNotFoundError, KeyError):
-    # Cette erreur se produit quand on lance le script en local (pas dans Streamlit)
-    # et que 'st.secrets' n'existe pas. C'est normal.
+    # Si 'st.secrets' n'existe pas, on est en local. On utilisera Ollama.
     LLM_PROVIDER = "ollama"
-    print("INFO: Lancement en local. L'application utilisera Ollama.")
+    print("INFO: Lancement en local. L'application utilisera Ollama (à implémenter).")
 
+# Modèle cible sur l'API Hugging Face
+HF_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
 
-# URL de l'API Hugging Face et nom du modèle Ollama
-HF_API_URL = "https://api-inference.huggingface.co/models/OpenAssistant/oasst-sft-4-pythia-12b-epoch-3.5"
-OLLAMA_MODEL = "qwen3:8b" 
-
+# --- La Fonction d'Extraction de Texte (inchangée) ---
 def extract_text_from_pdf(pdf_path):
     if not os.path.exists(pdf_path):
-        print(f"ERREUR: Fichier non trouvé : {pdf_path}")
+        print(f"ERREUR: Fichier PDF non trouvé : {pdf_path}")
         return None
     try:
         document = fitz.open(pdf_path)
@@ -46,77 +47,58 @@ def extract_text_from_pdf(pdf_path):
         print(f"ERREUR lors de la lecture du PDF : {e}")
         return None
 
+# --- La Fonction de Structuration (Version finale avec InferenceClient) ---
 def structure_data_with_llm(text_content):
-    print("INFO: Envoi du texte au LLM pour structuration...")
-    prompt = f"""
-    Tu es un assistant expert en extraction de données à partir de devis du BTP.
-    Analyse le texte brut suivant. Ta mission est de retourner UNIQUEMENT un objet JSON.
+    if LLM_PROVIDER != "huggingface":
+        # Pour l'instant, on se concentre sur la version en ligne qui était notre problème.
+        # On pourrait rajouter la logique Ollama ici plus tard si besoin.
+        st.error(f"Le fournisseur d'IA configuré ({LLM_PROVIDER}) n'est pas supporté pour le moment.")
+        return None
 
-    Le JSON doit contenir les clés suivantes :
-    - "nom_client": Le nom de l'entreprise ou de la personne à qui le devis est adressé.
-    - "date_devis": La date d'émission du devis.
-    - "numero_devis": Le numéro d'identification unique du devis.
-    - "total_ht": Le montant total Hors Taxes (doit être un nombre).
-    - "total_ttc": Le montant total Toutes Taxes Comprises (doit être un nombre).
-    - "lignes_articles": Une liste d'objets.
+    print(f"INFO: Appel à l'API Hugging Face (modèle: {HF_MODEL_ID})...")
+    
+    prompt_template = """
+    Tu es un assistant expert en extraction de données de documents BTP.
+    Analyse le texte brut suivant et retourne UNIQUEMENT un objet JSON valide.
 
-    Chaque objet dans la liste "lignes_articles" doit contenir :
-    - "description": La description de l'article.
-    - "quantite": La quantité (doit être un nombre).
-    - "prix_unitaire_ht": Le prix unitaire HT (doit être un nombre).
-    - "total_ligne_ht": Le prix total de la ligne HT (doit être un nombre).
+    Le JSON doit contenir ces clés : "nom_client", "date_devis", "numero_devis", "total_ht", "total_ttc", et "lignes_articles" (une liste d'objets).
+    Chaque objet dans "lignes_articles" doit avoir : "description", "quantite" (nombre), "prix_unitaire_ht" (nombre), "total_ligne_ht" (nombre).
+    Si une information est introuvable, utilise la valeur `null`. Extrais les nombres seuls.
 
-    Règles importantes :
-    1. Si une information n'est pas trouvée, utilise la valeur `null` (pas la chaîne "null").
-    2. Extrais les nombres uniquement (ex: pour "8.50 €", extrais `8.50`).
-
-    Voici le texte à analyser :
+    TEXTE À ANALYSER:
     ---
     {text_content}
     ---
     """
-    # C'est ici que notre code devient "intelligent"
-    if LLM_PROVIDER == "huggingface":
-        print("INFO: Appel à l'API Hugging Face (mode en ligne)...")
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        # Formatage spécifique pour les modèles de type OpenAssistant
-        formatted_prompt = f"<|prompter|>{prompt}<|endoftext|><|assistant|>"
+    final_prompt = prompt_template.format(text_content=text_content)
+    
+    messages = [{"role": "user", "content": final_prompt}]
 
-        payload = {
-            "inputs": formatted_prompt,
-            "parameters": {
-                "max_new_tokens": 1024,
-                "temperature": 0.1,
-                "return_full_text": False
-            }
-        }
-        try:
-            response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
-            generated_json_text = response.json()[0]['generated_text']
-            print("SUCCÈS: Réponse reçue de Hugging Face.")
-            return json.loads(generated_json_text)
-        except Exception as e:
-            print(f"ERREUR (Hugging Face): {e}")
-            st.error(f"Erreur de communication avec le service IA en ligne. Détails : {e}")
-            return None
+    try:
+        # On initialise le client avec notre token sécurisé
+        client = InferenceClient(token=HF_TOKEN)
 
-    elif LLM_PROVIDER == "ollama":
-        print("INFO: Appel à Ollama (mode local)...")
-        try:
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{'role': 'user', 'content': prompt}],
-                format="json"
-            )
-            print("SUCCÈS: Réponse reçue d'Ollama.")
-            return json.loads(response['message']['content'])
-        except Exception as e:
-            print(f"ERREUR (Ollama): {e}")
-            st.error(f"Erreur de communication avec l'IA locale. Ollama est-il bien lancé ? Détails : {e}")
-            return None
+        # On utilise la méthode 'chat_completion' qui est la bonne pour ce modèle
+        full_response_text = ""
+        for token in client.chat_completion(
+            messages=messages,
+            model=HF_MODEL_ID,
+            max_tokens=1500, # Assez de place pour un JSON complexe
+            stream=True,
+            temperature=0.1
+        ):
+            if token.choices[0].delta.content is not None:
+                full_response_text += token.choices[0].delta.content
+        
+        print("SUCCÈS: Réponse complète reçue de l'API.")
+        # Le LLM peut parfois ajouter des ```json ... ``` autour de sa réponse.
+        # On nettoie ça pour être sûr d'avoir un JSON pur.
+        if full_response_text.strip().startswith("```json"):
+            full_response_text = full_response_text.strip()[7:-4]
 
-    else:
-        print("ERREUR: Aucun fournisseur LLM n'est configuré.")
-        st.error("Le service d'intelligence artificielle n'est pas configuré.")
+        return json.loads(full_response_text)
+
+    except Exception as e:
+        print(f"ERREUR (Hugging Face): L'appel à l'API a échoué. {e}")
+        st.error(f"Erreur de communication avec le service IA. Détails : {e}")
         return None
