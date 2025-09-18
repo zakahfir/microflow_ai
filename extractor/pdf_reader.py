@@ -27,7 +27,7 @@ except (FileNotFoundError, KeyError):
 
 
 # URL de l'API Hugging Face et nom du modèle Ollama
-HF_API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3.1-8B-Instruct"
+HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 OLLAMA_MODEL = "qwen3:8b" 
 
 def extract_text_from_pdf(pdf_path):
