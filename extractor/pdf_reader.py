@@ -57,14 +57,39 @@ def structure_data_with_llm(text_content):
 
     print(f"INFO: Appel à l'API Hugging Face (modèle: {HF_MODEL_ID})...")
     
-    prompt_template = """
-    Tu es un assistant expert en extraction de données de documents BTP.
-    Analyse le texte brut suivant et retourne UNIQUEMENT un objet JSON valide.
+    # Le nouveau prompt amélioré
+    prompt = f"""
+Tu es un assistant expert en extraction de données. Ta mission est d'analyser un texte de devis et de retourner un objet JSON valide et complet.
 
-    Le JSON doit contenir ces clés : "nom_client", "date_devis", "numero_devis", "total_ht", "total_ttc", et "lignes_articles" (une liste d'objets).
-    Chaque objet dans "lignes_articles" doit avoir : "description", "quantite" (nombre), "prix_unitaire_ht" (nombre), "total_ligne_ht" (nombre).
-    Si une information est introuvable, utilise la valeur `null`. Extrais les nombres seuls.
+RÈGLES STRICTES :
+1. Tu dois retourner UNIQUEMENT l'objet JSON. Pas de texte avant, pas de texte après, pas de ```json.
+2. Toutes les valeurs numériques (quantite, prix, total) doivent être des nombres (float ou int), pas des chaînes de caractères.
+3. Si une information est introuvable, sa valeur doit être `null`.
 
+EXEMPLE DE SORTIE ATTENDUE :
+{{
+  "nom_client": "M. Jean Dupont",
+  "date_devis": "25/08/2025",
+  "numero_devis": "DEV-2025-042",
+  "total_ht": 4122.00,
+  "total_ttc": 4946.40,
+  "lignes_articles": [
+    {{
+      "description": "Fourniture et pose chaudière Frisquet",
+      "quantite": 1,
+      "prix_unitaire_ht": 3500.00,
+      "total_ligne_ht": 3500.00
+    }},
+    {{
+      "description": "Tube cuivre diam. 14 (mètre)",
+      "quantite": 12,
+      "prix_unitaire_ht": 8.50,
+      "total_ligne_ht": 102.00
+    }}
+  ]
+}}
+
+MAINTENANT, ANALYSE LE TEXTE SUIVANT ET PRODUIS LE JSON CORRESPONDANT :
     TEXTE À ANALYSER:
     ---
     {text_content}
@@ -83,9 +108,10 @@ def structure_data_with_llm(text_content):
         for token in client.chat_completion(
             messages=messages,
             model=HF_MODEL_ID,
-            max_tokens=1500, # Assez de place pour un JSON complexe
+            max_tokens=4096, # Assez de place pour un JSON complexe
             stream=True,
-            temperature=0.1
+            temperature=0.1,
+            "return_full_text": False
         ):
             if token.choices[0].delta.content is not None:
                 full_response_text += token.choices[0].delta.content
