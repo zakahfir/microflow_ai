@@ -44,7 +44,7 @@ class QuotePDF(FPDF):
         self.ln(10)
 
 
-    # **** C'EST ICI QUE LE PROBLÈME SE SITUE PROBABLEMENT ****
+     # **** NOUVELLE VERSION DE LA FONCTION quote_table ****
     def quote_table(self, lines, total_ht, total_ttc):
         self.set_font(self.font_family, 'B', 10)
         col_widths = (100, 20, 35, 35)
@@ -52,38 +52,68 @@ class QuotePDF(FPDF):
         
         for header, width in zip(headers, col_widths):
             self.cell(width, 8, header, 1, 0, 'C')
-        self.ln() # Saut de ligne après l'en-tête
+        self.ln()
 
         self.set_font(self.font_family, '', 9)
-        if lines:
+        if not lines:
+            self.cell(sum(col_widths), 10, "Aucun article à afficher.", 1, 1, 'C')
+        else:
             for item in lines:
-                # --- DÉBOGAGE ET ROBUSTESSE ---
-                # On utilise .get(key, default_value) pour éviter les erreurs si une clé manque.
-                # On convertit explicitement en string pour la fonction cell.
+                # --- NOUVELLE LOGIQUE DE NETTOYAGE ET D'AFFICHAGE ROBUSTE ---
+
+                # 1. On nettoie chaque donnée AVANT de l'utiliser.
                 description = str(item.get('description', ''))
-                quantite = str(item.get('quantite', ''))
                 
-                # Pour les prix, on essaie de les formater, sinon on met une chaîne vide.
+                # Pour la quantité, on essaie de la convertir en nombre, sinon on affiche ce qu'on a.
                 try:
-                    prix_unitaire = f"{float(item.get('prix_unitaire_ht', 0)):.2f} EUR"
+                    quantite_val = float(item.get('quantite', 0))
+                    # On affiche sans décimales si c'est un entier.
+                    quantite_str = str(int(quantite_val)) if quantite_val.is_integer() else str(quantite_val)
                 except (ValueError, TypeError):
-                    prix_unitaire = "N/A"
+                    quantite_str = str(item.get('quantite', ''))
+
+                # Pour les prix, on essaie de les formater, sinon on affiche "N/A".
+                try:
+                    prix_unitaire_str = f"{float(item.get('prix_unitaire_ht', 0)):.2f} EUR"
+                except (ValueError, TypeError):
+                    prix_unitaire_str = "N/A"
                     
                 try:
-                    total_ligne = f"{float(item.get('total_ligne_ht', 0)):.2f} EUR"
+                    total_ligne_str = f"{float(item.get('total_ligne_ht', 0)):.2f} EUR"
                 except (ValueError, TypeError):
-                    total_ligne = "N/A"
+                    total_ligne_str = "N/A"
 
-                # On utilise la même logique multi-ligne qu'avant pour la description
+                # 2. On dessine les cellules avec les données nettoyées.
+                # La logique multi_cell est conservée pour les descriptions longues.
                 y_before = self.get_y()
                 self.multi_cell(col_widths[0], 6, description, 1, 'L')
-                y_after = self.get_y()
-                line_height = y_after - y_before
+                line_height = self.get_y() - y_before
                 self.set_xy(self.get_x() + col_widths[0], y_before)
                 
-                self.cell(col_widths[1], line_height, quantite, 1, 0, 'R')
-                self.cell(col_widths[2], line_height, prix_unitaire, 1, 0, 'R')
-                self.cell(col_widths[3], line_height, total_ligne, 1, 1, 'R')
+                self.cell(col_widths[1], line_height, quantite_str, 1, 0, 'R')
+                self.cell(col_widths[2], line_height, prix_unitaire_str, 1, 0, 'R')
+                self.cell(col_widths[3], line_height, total_ligne_str, 1, 1, 'R')
+        
+        # ... (La partie des totaux reste la même, elle fonctionne bien)
+        self.ln(5)
+        self.set_font(self.font_family, 'B', 10)
+        # S'assurer que total_ht et total_ttc sont bien des nombres avant de les formater
+        try:
+            total_ht_val = float(total_ht or 0)
+            total_ttc_val = float(total_ttc or 0)
+            tva_amount = total_ttc_val - total_ht_val
+        except (ValueError, TypeError):
+            total_ht_val = 0
+            total_ttc_val = 0
+            tva_amount = 0
+
+        self.cell(sum(col_widths[:3]), 8, 'TOTAL HT', 1, 0, 'R')
+        self.cell(col_widths[3], 8, f"{total_ht_val:.2f} EUR", 1, 1, 'R')
+        self.cell(sum(col_widths[:3]), 8, 'TVA (20%)', 1, 0, 'R')
+        self.cell(col_widths[3], 8, f"{tva_amount:.2f} EUR", 1, 1, 'R')
+        self.set_font(self.font_family, 'B', 11)
+        self.cell(sum(col_widths[:3]), 8, 'TOTAL TTC', 1, 0, 'R')
+        self.cell(col_widths[3], 8, f"{total_ttc_val:.2f} EUR", 1, 1, 'R')
         
         # ... (La partie des totaux reste la même)
         self.ln(5)
