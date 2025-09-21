@@ -17,3 +17,6 @@ output_devis/
 # Fichiers de système d'exploitation
 .DS_Store
 Thumbs.db
+
+# Ignorer le dossier des secrets locaux
+.streamlit/secrets.toml
