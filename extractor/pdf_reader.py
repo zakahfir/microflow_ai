@@ -10,7 +10,7 @@ import requests # IMPORTATION CRUCIALE
 # --- Configuration ---
 LLM_PROVIDER = "none"
 HF_TOKEN = None
-HF_MODEL_ID = "google/gemma-7b-it" # On utilise Gemma, stable et ouvert
+HF_MODEL_ID = "Qwen/Qwen3-Next-80B-A3B-Thinking" # On utilise Gemma, stable et ouvert
 HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL_ID}"
 
 # Logique de détection
