@@ -4,13 +4,16 @@ import os
 import json
 import fitz
 import streamlit as st
+
+# On importe les deux clients, même si on n'en utilise qu'un à la fois.
 from huggingface_hub import InferenceClient
+import requests # CET IMPORT EST IMPORTANT POUR LA GESTION D'ERREURS
 
 # --- Configuration ---
+# ... (le reste du code de configuration est bon)
 LLM_PROVIDER = "none"
 HF_TOKEN = None
 
-# Logique de détection de l'environnement
 try:
     if "HUGGINGFACE_API_KEY" in st.secrets:
         HF_TOKEN = st.secrets["HUGGINGFACE_API_KEY"]
