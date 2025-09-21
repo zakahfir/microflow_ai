@@ -23,8 +23,8 @@ except (FileNotFoundError, KeyError):
     LLM_PROVIDER = "local_placeholder" 
     print("INFO: Lancement en local (simulation).")
 
-# NOUVEL IDENTIFIANT DE MODÈLE : Qwen 3 Next 80B A3B Thinking
-HF_MODEL_ID = "Qwen/Qwen3-Next-80B-A3B-Thinking"
+# NOUVEL IDENTIFIANT DE MODÈLE : google/gemma-7b-it
+HF_MODEL_ID = "google/gemma-7b-it"
 
 # --- La Fonction d'Extraction de Texte (inchangée) ---
 def extract_text_from_pdf(pdf_path):
@@ -43,10 +43,10 @@ def extract_text_from_pdf(pdf_path):
         print(f"ERREUR lors de la lecture du PDF : {e}")
         return None
 
-# --- La Fonction de Structuration (avec InferenceClient et le bon modèle) ---
+# --- La Fonction de Structuration (Version "Anti-Crash") ---
 def structure_data_with_llm(text_content):
     if LLM_PROVIDER != "huggingface":
-        st.error(f"Le fournisseur d'IA configuré ({LLM_PROVIDER}) n'est pas supporté pour le moment.")
+        st.error(f"Le fournisseur d'IA configuré ({LLM_PROVIDER}) n'est pas supporté.")
         return None
 
     print(f"INFO: Appel à l'API Hugging Face (modèle: {HF_MODEL_ID})...")
@@ -77,41 +77,55 @@ def structure_data_with_llm(text_content):
     ---
     """
     
-    messages = [{"role": "user", "content": prompt}]
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_new_tokens": 4096, "temperature": 0.1, "return_full_text": False}
+    }
 
     try:
-        client = InferenceClient(token=HF_TOKEN)
+        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=60) # Timeout augmenté à 60s
+        response.raise_for_status()
 
-        full_response_text = ""
-        for token in client.chat_completion(
-            messages=messages,
-            model=HF_MODEL_ID,
-            max_tokens=4096, # On garde une grande fenêtre de réponse
-            stream=True,
-            temperature=0.1
-        ):
-            if token.choices[0].delta.content is not None:
-                full_response_text += token.choices[0].delta.content
+        response_data = response.json()
         
-        print("SUCCÈS: Réponse complète reçue de l'API.")
-        
-        # Le nettoyage pour enlever les ```json ... ``` est toujours une bonne pratique
-        if full_response_text.strip().startswith("```json"):
-            cleaned_text = full_response_text.strip()[7:-4]
-        elif full_response_text.strip().startswith("{"):
-            cleaned_text = full_text
-        else: # Si l'IA ajoute du texte avant le JSON
-            start_index = full_response_text.find('{')
-            end_index = full_response_text.rfind('}') + 1
+        # --- NOUVELLE LOGIQUE "ANTI-CRASH" ---
+        # 1. On vérifie que la réponse n'est pas vide et est bien une liste
+        if not response_data or not isinstance(response_data, list):
+            print(f"ERREUR: Réponse inattendue de l'API (pas une liste ou vide): {response_data}")
+            st.error("Le service IA a retourné une réponse vide ou mal formée.")
+            return None
+
+        # 2. On accède au premier élément en toute sécurité
+        generated_text = response_data[0].get('generated_text', '')
+
+        if not generated_text:
+            print(f"ERREUR: L'IA n'a rien généré. Réponse complète : {response_data}")
+            st.error("Le service IA n'a pas généré de texte.")
+            return None
+
+        # 3. On nettoie et on parse le JSON
+        print("SUCCÈS: Réponse reçue de l'API.")
+        if generated_text.strip().startswith("```json"):
+            cleaned_text = generated_text.strip()[7:-4]
+        elif generated_text.strip().startswith("{"):
+            cleaned_text = generated_text.strip()
+        else:
+            start_index = generated_text.find('{')
+            end_index = generated_text.rfind('}') + 1
             if start_index != -1 and end_index != -1:
-                cleaned_text = full_response_text[start_index:end_index]
+                cleaned_text = generated_text[start_index:end_index]
             else:
-                cleaned_text = full_response_text
+                raise ValueError("Aucun JSON trouvé dans la réponse de l'IA.")
         
         return json.loads(cleaned_text)
 
-    except Exception as e:
-        print(f"ERREUR (Hugging Face): L'appel à l'API a échoué. {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"ERREUR (Hugging Face): {e}")
         st.error(f"Erreur de communication avec le service IA. Détails : {e}")
-        print("Réponse brute de l'API (si disponible):", full_response_text if 'full_response_text' in locals() else "Pas de réponse capturée")
+        return None
+    except (ValueError, KeyError, IndexError, json.JSONDecodeError) as e:
+        print(f"ERREUR: La réponse de l'IA n'était pas un JSON valide. {e}")
+        st.error("Le service IA a retourné une réponse inattendue. Veuillez réessayer.")
+        print("Réponse brute de l'API:", response.text if 'response' in locals() else "Pas de réponse capturée")
         return None
