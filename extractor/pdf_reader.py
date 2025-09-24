@@ -1,5 +1,4 @@
 # microflow_ai/extractor/pdf_reader.py
-# VERSION FINALE "CHAT COMPLETION" - LA BONNE MÉTHODE
 
 import os
 import json
@@ -42,8 +41,7 @@ def structure_data_with_llm(text_content):
 
     print(f"INFO: Appel API HF avec la tâche 'chat' (Modèle: {MODEL_ID})...")
     
-    # Notre prompt est déjà bien formaté pour une conversation, mais on s'assure qu'il est propre.
-    # On enlève les balises <|system|>, etc. que l'on avait mises pour text-generation.
+    # Le prompt demande explicitement un JSON structuré
     prompt = f"""
     Tu es un assistant expert en extraction de données. Analyse le texte de devis suivant et retourne UNIQUEMENT un objet JSON valide et complet.
 
