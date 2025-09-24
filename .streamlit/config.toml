@@ -1,0 +1,18 @@
+# .streamlit/config.toml
+
+[theme]
+# Couleur de fond principale de l'application
+base="light"
+
+# Couleur de fond des éléments comme la sidebar (pas utilisée ici) ou les zones de code
+backgroundColor="#FFFFFF" # Blanc pur
+
+# Couleur du texte principal
+textColor="#0a0a0a" # Un noir très foncé
+
+# Police de caractères (garde 'sans serif' pour un look moderne)
+font="sans serif"
+
+# Couleur principale utilisée pour les widgets interactifs (boutons, curseurs, etc.)
+# Tu pourrais mettre ici le code hexadécimal du bleu de ton logo !
+primaryColor="#0068C9" 

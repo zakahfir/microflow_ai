@@ -151,9 +151,7 @@ if not st.session_state.access_granted:
 # APPLICATION PRINCIPALE
 # =======================================================
 else:
-    st.set_page_config(layout="wide")
-    
-    # On crée un "conteneur" principal qui va contenir l'affichage de l'étape actuelle
+    # --- Conteneur Principal ---
     main_placeholder = st.container()
 
     # --- On remplit le conteneur en fonction de l'étape ---
@@ -208,8 +206,8 @@ else:
             mo_hours = st.number_input("Quantité (heures)", min_value=0.0, step=0.5, value=8.0)
             mo_rate = st.number_input("Taux horaire (€/h)", min_value=0.0, step=5.0, value=50.0)
             
-            submitted = st.form_submit_button("Calculer et Prévisualiser le Devis Final")
-        if st.button("Recommencer (importer un autre PDF)"):
+            submitted = st.form_submit_button("Calculer et Prévisualiser le Devis Final (cliquez 2 fois si besoin)")
+        if st.button("Recommencer (importer un autre PDF ou repartir de zéro)"):
             restart_process()
             st.rerun()
             
