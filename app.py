@@ -151,13 +151,24 @@ if not st.session_state.access_granted:
 # APPLICATION PRINCIPALE
 # =======================================================
 else:
-    st.title("🤖 MicroFlow.AI") 
-    st.subheader("Transformez un devis fournisseur en devis client.")
+    st.set_page_config(layout="wide")
+    
+    # On crée un "conteneur" principal qui va contenir l'affichage de l'étape actuelle
+    main_placeholder = st.container()
 
-    # ÉTAPE 1 : UPLOAD
-    st.header("1. Importez votre devis fournisseur")
+    # --- On remplit le conteneur en fonction de l'étape ---
+    # ==================== ÉTAPE 1 : UPLOAD ====================
     if st.session_state.step == "upload":
-        uploaded_file = st.file_uploader("Choisissez un fichier PDF", type="pdf", label_visibility="collapsed")
+        with main_placeholder:
+            st.title("🤖 MicroFlow.AI")
+            st.header("1. Importez votre devis fournisseur")
+            uploaded_file = st.file_uploader(
+                "Choisissez un fichier PDF", 
+                type="pdf", 
+                label_visibility="collapsed",
+                key="file_uploader" # On lui donne un nom unique
+            )
+        st.info("Importez un fichier PDF de devis fournisseur. L'IA va analyser et structurer les données automatiquement.")
 
         if uploaded_file is not None:
             with st.spinner("Analyse du PDF par l'IA... (cela peut prendre jusqu'à 30 secondes, merci de patienter)"):
@@ -177,15 +188,15 @@ else:
                 else: st.error("Impossible d'extraire le texte de ce PDF.")
                 os.remove(temp_pdf_path)
 
-    # =======================================================
-    # ÉTAPE 2 : AJUSTEMENTS SIMPLES
-    # =======================================================
+    # ==================== ÉTAPE 2 : AJUSTEMENTS ====================
     elif st.session_state.step == "edit":
-        st.header("2. Appliquez vos ajustements")
-        
-        st.info("Voici les données extraites. Vous pouvez maintenant appliquer votre marge et ajouter votre main d'œuvre.")
-        df_raw = pd.DataFrame(st.session_state.raw_data.get('lignes_articles', []))
-        st.table(df_raw.style.format(na_rep="-", formatter={"prix_unitaire_ht": "{:.2f} €", "total_ligne_ht": "{:.2f} €"}))
+        with main_placeholder:
+            st.title("🤖 MicroFlow.AI")
+            st.header("2. Appliquez vos ajustements")
+
+            st.info("Voici les données extraites. Vous pouvez maintenant appliquer votre marge et ajouter votre main d'œuvre.")
+            df_raw = pd.DataFrame(st.session_state.raw_data.get('lignes_articles', []))
+            st.table(df_raw.style.format(na_rep="-", formatter={"prix_unitaire_ht": "{:.2f} €", "total_ligne_ht": "{:.2f} €"}))
 
         st.markdown("---")
 
@@ -198,7 +209,10 @@ else:
             mo_rate = st.number_input("Taux horaire (€/h)", min_value=0.0, step=5.0, value=50.0)
             
             submitted = st.form_submit_button("Calculer et Prévisualiser le Devis Final")
-
+        if st.button("Recommencer (importer un autre PDF)"):
+            restart_process()
+            st.rerun()
+            
         if submitted:
             with st.spinner("Application de vos ajustements et recalcul des totaux..."):
                 time.sleep(2) # On attend 2 secondes pour l'effet
@@ -227,73 +241,69 @@ else:
             }
             st.session_state.step = "preview"
 
-        if st.button("Recommencer (importer un autre PDF)"):
-            restart_process()
-            st.rerun()
+    # ==================== ÉTAPE 3 : APERÇU ET GÉNÉRATION ====================
+    elif st.session_state.step == "preview":
+        with main_placeholder:
+            st.title("🤖 MicroFlow.AI")
+            st.header("3. Aperçu et Génération du PDF")
 
-# =======================================================
-# ÉTAPE 3 : APERÇU ET GÉNÉRATION - VERSION CORRIGÉE
-# =======================================================
-        elif st.session_state.step == "preview":
-            st.header("3. Aperçu et Génération")
+        st.success("Votre devis est prêt ! Vérifiez les informations ci-dessous avant de générer le PDF.")
 
-            st.success("Votre devis est prêt ! Vérifiez les informations ci-dessous avant de générer le PDF.")
+        # Affichage du tableau final pour vérification
+        df_final = pd.DataFrame(st.session_state.final_quote_data.get('lignes_articles', []))
+        st.table(df_final.style.format(na_rep="-", formatter={"prix_unitaire_ht": "{:.2f} €", "total_ligne_ht": "{:.2f} €"}))
 
-            # Affichage du tableau final pour vérification
-            df_final = pd.DataFrame(st.session_state.final_quote_data.get('lignes_articles', []))
-            st.table(df_final.style.format(na_rep="-", formatter={"prix_unitaire_ht": "{:.2f} €", "total_ligne_ht": "{:.2f} €"}))
+        # Calcul et affichage des totaux
+        total_ht = df_final['total_ligne_ht'].sum()
+        total_ttc = total_ht * 1.20
+        col_total1, col_total2 = st.columns(2)
+        col_total1.metric("TOTAL HT", f"{total_ht:.2f} €")
+        col_total2.metric("TOTAL TTC", f"{total_ttc:.2f} €")
 
-            # Calcul et affichage des totaux
-            total_ht = df_final['total_ligne_ht'].sum()
-            total_ttc = total_ht * 1.20
-            col_total1, col_total2 = st.columns(2)
-            col_total1.metric("TOTAL HT", f"{total_ht:.2f} €")
-            col_total2.metric("TOTAL TTC", f"{total_ttc:.2f} €")
+        st.markdown("---")
 
-            st.markdown("---")
+        # --- ACTIONS POSSIBLES ---
+        
+        col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 3])
 
-            # --- ACTIONS POSSIBLES ---
-            
-            col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 3])
+        with col_btn1:
+            # Bouton pour revenir à l'étape d'édition
+            if st.button("Modifier les Ajustements"):
+                st.session_state.step = "edit"
+                # ON UTILISE st.rerun() ICI, car on veut explicitement changer de page
+                st.rerun()
+                
+        with col_btn2:
+            # Bouton pour tout recommencer
+            if st.button("Recommencer de Zéro"):
+                restart_process()
+                # ON UTILISE st.rerun() ICI, car on veut explicitement tout réinitialiser
+                st.rerun()
 
-            with col_btn1:
-                # Bouton pour revenir à l'étape d'édition
-                if st.button("Modifier les Ajustements"):
-                    st.session_state.step = "edit"
-                    # ON UTILISE st.rerun() ICI, car on veut explicitement changer de page
-                    st.rerun()
-                    
-            with col_btn2:
-                # Bouton pour tout recommencer
-                if st.button("Recommencer de Zéro"):
-                    restart_process()
-                    # ON UTILISE st.rerun() ICI, car on veut explicitement tout réinitialiser
-                    st.rerun()
+        # Le bouton principal de génération. Il est en dehors des colonnes pour être plus visible.
+        if st.button("✅ Générer et Télécharger le PDF", type="primary"):
+            with st.spinner("Création de votre document..."):
+                # On prépare les données finales (identique à avant)
+                data_to_generate = st.session_state.final_quote_data.copy()
+                data_to_generate['total_ht'] = total_ht
+                data_to_generate['total_ttc'] = total_ttc
+                
+                output_dir = "output_devis"; os.makedirs(output_dir, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_filename = f"Devis_Client_{timestamp}.pdf"
+                output_pdf_path = os.path.join(output_dir, output_filename)
 
-            # Le bouton principal de génération. Il est en dehors des colonnes pour être plus visible.
-            if st.button("✅ Générer et Télécharger le PDF", type="primary"):
-                with st.spinner("Création de votre document..."):
-                    # On prépare les données finales (identique à avant)
-                    data_to_generate = st.session_state.final_quote_data.copy()
-                    data_to_generate['total_ht'] = total_ht
-                    data_to_generate['total_ttc'] = total_ttc
-                    
-                    output_dir = "output_devis"; os.makedirs(output_dir, exist_ok=True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_filename = f"Devis_Client_{timestamp}.pdf"
-                    output_pdf_path = os.path.join(output_dir, output_filename)
+                success = generate_pdf(data_to_generate, output_pdf_path)
 
-                    success = generate_pdf(data_to_generate, output_pdf_path)
-
-                    if success:
-                        st.success("Devis généré !")
-                        with open(output_pdf_path, "rb") as pdf_file:
-                            # On affiche le bouton de téléchargement directement
-                            st.download_button(
-                                label="Cliquez ici pour télécharger",
-                                data=pdf_file,
-                                file_name=output_filename,
-                                mime="application/pdf"
-                            )
-                    else: 
-                        st.error("Erreur lors de la création du PDF.")
+                if success:
+                    st.success("Devis généré !")
+                    with open(output_pdf_path, "rb") as pdf_file:
+                        # On affiche le bouton de téléchargement directement
+                        st.download_button(
+                            label="Cliquez ici pour télécharger",
+                            data=pdf_file,
+                            file_name=output_filename,
+                            mime="application/pdf"
+                        )
+                else: 
+                    st.error("Erreur lors de la création du PDF.")
