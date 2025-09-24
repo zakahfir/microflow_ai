@@ -8,6 +8,7 @@ import os
 import json
 from datetime import datetime
 import csv
+import time
 from extractor.pdf_reader import extract_text_from_pdf, structure_data_with_llm
 from generator.pdf_generator import generate_pdf
 import pandas as pd
@@ -19,12 +20,13 @@ LEADS_FILE = "beta_users.csv"
 st.set_page_config(
     page_title="MicroFlow.AI - Assistant Devis",
     page_icon="🤖",
-    layout="centered" # On repasse en mode centré pour la page d'accueil
+    layout="centered" 
 )
 
 # --- Initialisation de la Mémoire de Session (Session State) ---
 def initialize_state():
-    # 'email_provided' sera notre "clé" pour déverrouiller l'application
+    if 'access_granted' not in st.session_state:
+        st.session_state.access_granted = False
     if 'email_provided' not in st.session_state:
         st.session_state.email_provided = False
     if 'step' not in st.session_state:
@@ -34,22 +36,64 @@ def initialize_state():
     if 'final_quote_data' not in st.session_state:
         st.session_state.final_quote_data = None
     if 'processed_file_name' not in st.session_state:
-        st.session_state.processed_file_name = None
+        st.session_state.processed_file_name = None  
 
 initialize_state()
 
 # --- Fonctions Utilitaires ---
-def save_lead(name, email, profession):
-    """Sauvegarde un nouveau lead dans le fichier CSV."""
-    # On s'assure que le fichier existe avec les bons en-têtes
-    file_exists = os.path.isfile(LEADS_FILE)
-    with open(LEADS_FILE, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(['prenom', 'email', 'metier', 'date_inscription']) # En-têtes
+def initialize_state():
+    if 'access_granted' not in st.session_state:
+        st.session_state.access_granted = False
+    # ... (les autres variables de session sont utiles pour le workflow interne)
+    if 'step' not in st.session_state: st.session_state.step = "upload"
+    # ...
+
+def update_or_create_lead(name, email, profession):
+    """
+    Crée un nouveau lead s'il n'existe pas, ou met à jour
+    les informations (prénom, métier) si l'email existe déjà et que les
+    nouveaux champs sont remplis.
+    """
+    # Noms des colonnes pour notre fichier CSV
+    columns = ['prenom', 'email', 'metier', 'date_inscription']
+    
+    # On vérifie si le fichier existe et n'est pas vide
+    if os.path.isfile(LEADS_FILE) and os.path.getsize(LEADS_FILE) > 0:
+        # Si oui, on le lit avec Pandas
+        df = pd.read_csv(LEADS_FILE)
+    else:
+        # Si non, on crée un DataFrame (tableau) vide avec les bonnes colonnes
+        df = pd.DataFrame(columns=columns)
+
+    # On cherche si l'email existe déjà dans le DataFrame
+    if email in df['email'].values:
+        print(f"UTILISATEUR EXISTANT : {email}. Vérification des mises à jour...")
+        # On trouve l'index (le numéro de ligne) de cet utilisateur
+        index = df[df['email'] == email].index[0]
         
-        # On écrit la nouvelle ligne
-        writer.writerow([name, email, profession, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+        # On met à jour le prénom SEULEMENT si un nouveau prénom a été fourni
+        if name:
+            df.loc[index, 'prenom'] = name
+            print(f"-> Prénom mis à jour pour {email}.")
+            
+        # On met à jour le métier SEULEMENT si un nouveau métier a été fourni
+        if profession:
+            df.loc[index, 'metier'] = profession
+            print(f"-> Métier mis à jour pour {email}.")
+    else:
+        # Si l'email n'existe pas, on crée une nouvelle ligne
+        print(f"NOUVEL INSCRIT : {email}")
+        new_lead = pd.DataFrame([{
+            'prenom': name,
+            'email': email,
+            'metier': profession,
+            'date_inscription': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }])
+        df = pd.concat([df, new_lead], ignore_index=True)
+    
+    # Enfin, on sauvegarde le DataFrame mis à jour dans le fichier CSV, en écrasant l'ancien.
+    # index=False signifie qu'on ne veut pas écrire le numéro de ligne de Pandas dans le fichier.
+    df.to_csv(LEADS_FILE, index=False, encoding='utf-8')
 
 def restart_process():
     """Réinitialise tout le processus pour un nouveau devis."""
@@ -60,38 +104,53 @@ def restart_process():
     # Pas besoin de st.rerun() ici, le bouton qui l'appelle le fera.
 
 # =======================================================
-# PORTE D'ENTRÉE : ON AFFICHE CETTE PARTIE TANT QUE L'EMAIL N'EST PAS FOURNI
+# PORTE D'ENTRÉE "INTELLIGENTE" - VERSION CORRIGÉE
 # =======================================================
-if not st.session_state.email_provided:
+if not st.session_state.access_granted:
     st.title("🤖 Bienvenue sur MicroFlow.AI")
     st.header("L'outil qui transforme vos devis fournisseurs en devis clients.")
     st.markdown("---")
-    st.subheader("Accédez à la Bêta Gratuite")
-    st.write("Laissez votre prénom et votre email pour déverrouiller l'application et commencer à automatiser vos devis.")
+    
+    st.info("""
+    **Déjà inscrit ?** Entrez simplement votre email pour accéder à l'outil.
+    \n**Première visite ?** Remplissez les champs pour rejoindre la bêta gratuite !
+    """)
 
-    with st.form("email_form"):
-        user_name = st.text_input("Votre prénom")
-        user_email = st.text_input("Votre adresse email")
-        user_profession = st.text_input("Votre métier (ex: Plombier, Électricien...)")
-        submitted = st.form_submit_button("Accéder à l'outil")
+    # On crée un conteneur vide que l'on pourra faire disparaître
+    form_placeholder = st.empty()
 
-        if submitted:
-            if user_email and "@" in user_email: # Validation très simple de l'email
-                save_lead(user_name, user_email, user_profession)
-                st.session_state.email_provided = True
-                st.success(f"Merci {user_name}! Vous avez maintenant accès à l'application.")
-                # On force la page à se recharger pour afficher l'outil
-                st.rerun() 
-            else:
-                st.error("Veuillez entrer une adresse email valide.")
+    # On met le formulaire À L'INTÉRIEUR du conteneur
+    with form_placeholder.container():
+        with st.form("access_form"):
+            user_email = st.text_input("Votre Adresse Email* (obligatoire)")
+            st.markdown("---")
+            st.write("Informations pour les nouveaux utilisateurs (optionnel et modifiable plus tard) :")
+            user_name = st.text_input("Votre Prénom")
+            user_profession = st.text_input("Votre Métier (ex: Plombier)")
+            
+            submitted = st.form_submit_button("Accéder à l'Outil Gratuitement")
+
+    # La logique de soumission reste EN DEHORS du 'with form_placeholder.container()'
+    if submitted:
+        if user_email and "@" in user_email:
+            update_or_create_lead(user_name, user_email, user_profession)
+            st.session_state.access_granted = True
+            
+            # On vide le conteneur pour faire disparaître le formulaire
+            form_placeholder.empty()
+            
+            with st.spinner('Accès autorisé. Préparation de votre espace...'):
+                time.sleep(2)
+            st.success("Bienvenue ! L'application se charge.")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error("Veuillez entrer une adresse email valide.")
 
 # =======================================================
-# APPLICATION PRINCIPALE : NE S'AFFICHE QUE SI L'EMAIL A ÉTÉ FOURNI
+# APPLICATION PRINCIPALE
 # =======================================================
 else:
-    # On passe en mode "large" pour l'application principale
-    st.set_page_config(layout="wide")
-    
     st.title("🤖 MicroFlow.AI") 
     st.subheader("Transformez un devis fournisseur en devis client.")
 
@@ -141,6 +200,9 @@ else:
             submitted = st.form_submit_button("Calculer et Prévisualiser le Devis Final")
 
         if submitted:
+            with st.spinner("Application de vos ajustements et recalcul des totaux..."):
+                time.sleep(2) # On attend 2 secondes pour l'effet
+            # On applique la marge et ajoute la main d'œuvre
             final_lines = []
             for line in st.session_state.raw_data.get('lignes_articles', []):
                 new_line = line.copy()
@@ -164,44 +226,54 @@ else:
                 "numero_devis": st.session_state.raw_data.get('numero_devis'),
             }
             st.session_state.step = "preview"
-            st.rerun()
 
         if st.button("Recommencer (importer un autre PDF)"):
             restart_process()
             st.rerun()
 
 # =======================================================
-# ÉTAPE 3 : APERÇU ET GÉNÉRATION
+# ÉTAPE 3 : APERÇU ET GÉNÉRATION - VERSION CORRIGÉE
 # =======================================================
         elif st.session_state.step == "preview":
-            st.header("3. Aperçu et Génération du PDF")
+            st.header("3. Aperçu et Génération")
+
             st.success("Votre devis est prêt ! Vérifiez les informations ci-dessous avant de générer le PDF.")
 
+            # Affichage du tableau final pour vérification
             df_final = pd.DataFrame(st.session_state.final_quote_data.get('lignes_articles', []))
             st.table(df_final.style.format(na_rep="-", formatter={"prix_unitaire_ht": "{:.2f} €", "total_ligne_ht": "{:.2f} €"}))
 
+            # Calcul et affichage des totaux
             total_ht = df_final['total_ligne_ht'].sum()
             total_ttc = total_ht * 1.20
             col_total1, col_total2 = st.columns(2)
             col_total1.metric("TOTAL HT", f"{total_ht:.2f} €")
             col_total2.metric("TOTAL TTC", f"{total_ttc:.2f} €")
 
-            # On regroupe les boutons d'action dans des colonnes
-            col_btn1, col_btn2, col_btn3 = st.columns([1,1,2])
+            st.markdown("---")
+
+            # --- ACTIONS POSSIBLES ---
             
+            col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 3])
+
             with col_btn1:
+                # Bouton pour revenir à l'étape d'édition
                 if st.button("Modifier les Ajustements"):
                     st.session_state.step = "edit"
+                    # ON UTILISE st.rerun() ICI, car on veut explicitement changer de page
                     st.rerun()
                     
             with col_btn2:
+                # Bouton pour tout recommencer
                 if st.button("Recommencer de Zéro"):
                     restart_process()
+                    # ON UTILISE st.rerun() ICI, car on veut explicitement tout réinitialiser
                     st.rerun()
 
-            # Le bouton principal, pour générer le PDF
-            if st.button("Générer et Télécharger le PDF", type="primary"):
-                with st.spinner("Création du document..."):
+            # Le bouton principal de génération. Il est en dehors des colonnes pour être plus visible.
+            if st.button("✅ Générer et Télécharger le PDF", type="primary"):
+                with st.spinner("Création de votre document..."):
+                    # On prépare les données finales (identique à avant)
                     data_to_generate = st.session_state.final_quote_data.copy()
                     data_to_generate['total_ht'] = total_ht
                     data_to_generate['total_ttc'] = total_ttc
@@ -216,6 +288,7 @@ else:
                     if success:
                         st.success("Devis généré !")
                         with open(output_pdf_path, "rb") as pdf_file:
+                            # On affiche le bouton de téléchargement directement
                             st.download_button(
                                 label="Cliquez ici pour télécharger",
                                 data=pdf_file,
@@ -224,4 +297,3 @@ else:
                             )
                     else: 
                         st.error("Erreur lors de la création du PDF.")
-            st.markdown("---")
