@@ -11,10 +11,9 @@ import csv
 import time
 from extractor.pdf_reader import extract_text_from_pdf, structure_data_with_llm
 from generator.pdf_generator import generate_pdf
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- Fichiers de Données ---
-LEADS_FILE = "beta_users.csv"
 
 # --- Configuration de la Page ---
 st.set_page_config(
@@ -38,62 +37,80 @@ def initialize_state():
     if 'processed_file_name' not in st.session_state:
         st.session_state.processed_file_name = None  
 
-initialize_state()
-
 # --- Fonctions Utilitaires ---
 def initialize_state():
     if 'access_granted' not in st.session_state:
         st.session_state.access_granted = False
-    # ... (les autres variables de session sont utiles pour le workflow interne)
     if 'step' not in st.session_state: st.session_state.step = "upload"
-    # ...
 
-def update_or_create_lead(name, email, profession):
-    """
-    Crée un nouveau lead s'il n'existe pas, ou met à jour
-    les informations (prénom, métier) si l'email existe déjà et que les
-    nouveaux champs sont remplis.
-    """
-    # Noms des colonnes pour notre fichier CSV
-    columns = ['prenom', 'email', 'metier', 'date_inscription']
-    
-    # On vérifie si le fichier existe et n'est pas vide
-    if os.path.isfile(LEADS_FILE) and os.path.getsize(LEADS_FILE) > 0:
-        # Si oui, on le lit avec Pandas
-        df = pd.read_csv(LEADS_FILE)
-    else:
-        # Si non, on crée un DataFrame (tableau) vide avec les bonnes colonnes
-        df = pd.DataFrame(columns=columns)
+initialize_state()
 
-    # On cherche si l'email existe déjà dans le DataFrame
-    if email in df['email'].values:
-        print(f"UTILISATEUR EXISTANT : {email}. Vérification des mises à jour...")
-        # On trouve l'index (le numéro de ligne) de cet utilisateur
-        index = df[df['email'] == email].index[0]
-        
-        # On met à jour le prénom SEULEMENT si un nouveau prénom a été fourni
-        if name:
-            df.loc[index, 'prenom'] = name
-            print(f"-> Prénom mis à jour pour {email}.")
+def update_or_create_lead_gsheets(name, email, profession):
+    """
+    Crée ou met à jour un lead dans le Google Sheet en utilisant Pandas
+    pour une robustesse maximale.
+    """
+    try:
+        with st.spinner("Vérification de votre accès..."):
+            conn = st.connection("gsheets", type=GSheetsConnection)
             
-        # On met à jour le métier SEULEMENT si un nouveau métier a été fourni
-        if profession:
-            df.loc[index, 'metier'] = profession
-            print(f"-> Métier mis à jour pour {email}.")
-    else:
-        # Si l'email n'existe pas, on crée une nouvelle ligne
-        print(f"NOUVEL INSCRIT : {email}")
-        new_lead = pd.DataFrame([{
-            'prenom': name,
-            'email': email,
-            'metier': profession,
-            'date_inscription': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }])
-        df = pd.concat([df, new_lead], ignore_index=True)
-    
-    # Enfin, on sauvegarde le DataFrame mis à jour dans le fichier CSV, en écrasant l'ancien.
-    # index=False signifie qu'on ne veut pas écrire le numéro de ligne de Pandas dans le fichier.
-    df.to_csv(LEADS_FILE, index=False, encoding='utf-8')
+            # On lit la feuille existante
+            worksheet_df = conn.read(worksheet="Feuille1", use_headers=True, ttl=5).dropna(how="all")
+            # On s'assure que la colonne email est bien de type string pour la comparaison
+            worksheet_df['email'] = worksheet_df['email'].astype(str)
+
+            # On cherche si l'email existe
+            existing_rows = worksheet_df[worksheet_df['email'] == email]
+
+            if not existing_rows.empty:
+                # --- LOGIQUE DE MISE À JOUR ---
+                print(f"UTILISATEUR EXISTANT : {email}.")
+                index = existing_rows.index[0]
+                
+                updated_fields = []
+                if name and worksheet_df.loc[index, 'prenom'] != name:
+                    worksheet_df.loc[index, 'prenom'] = name
+                    updated_fields.append("prénom")
+                if profession and worksheet_df.loc[index, 'metier'] != profession:
+                    worksheet_df.loc[index, 'metier'] = profession
+                
+                # C'est ici qu'on sauvegarde le DataFrame COMPLET mis à jour
+                conn.update(worksheet="Feuille1", data=worksheet_df)
+
+                if updated_fields:
+                    st.toast(f"Informations mises à jour : {', '.join(updated_fields)}.", icon="👍")
+                else:
+                    st.toast("Accès accordé. Bienvenue à nouveau !", icon="👋")
+                st.balloons()
+
+            else:
+                # --- LOGIQUE DE CRÉATION - LA CORRECTION EST ICI ---
+                print(f"NOUVEL INSCRIT : {email}")
+                
+                # On crée un DataFrame pour la nouvelle ligne
+                new_lead_df = pd.DataFrame([{
+                    'prenom': name,
+                    'email': email,
+                    'metier': profession,
+                    'date_inscription': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }])
+                
+                # On combine l'ancien DataFrame avec le nouveau
+                # C'est la méthode la plus sûre pour ajouter une ligne
+                df_to_write = pd.concat([worksheet_df, new_lead_df], ignore_index=True)
+                
+                # On écrit le DataFrame COMPLET (l'ancien + le nouveau) dans la feuille
+                conn.update(worksheet="Feuille1", data=df_to_write)
+                
+                st.toast("Merci ! Vous êtes maintenant inscrit à la bêta.", icon="✅")
+                st.balloons()
+
+        return True
+
+    except Exception as e:
+        print(f"ERREUR GOOGLE SHEETS: {e}")
+        st.error("Une erreur est survenue lors de la sauvegarde. Veuillez réessayer.")
+        return False
 
 def restart_process():
     """Réinitialise tout le processus pour un nouveau devis."""
@@ -130,20 +147,13 @@ if not st.session_state.access_granted:
             
             submitted = st.form_submit_button("Accéder à l'Outil Gratuitement")
 
-    # La logique de soumission reste EN DEHORS du 'with form_placeholder.container()'
     if submitted:
         if user_email and "@" in user_email:
-            update_or_create_lead(user_name, user_email, user_profession)
-            st.session_state.access_granted = True
-            
-            # On vide le conteneur pour faire disparaître le formulaire
-            form_placeholder.empty()
-            
-            with st.spinner('Accès autorisé. Préparation de votre espace...'):
-                time.sleep(2)
-            st.success("Bienvenue ! L'application se charge.")
-            time.sleep(1)
-            st.rerun()
+            success = update_or_create_lead_gsheets(user_name, user_email, user_profession)
+            if success:
+                st.session_state.access_granted = True
+                time.sleep(3) # Petite pause pour voir le toast
+                st.rerun()
         else:
             st.error("Veuillez entrer une adresse email valide.")
 
@@ -213,7 +223,7 @@ else:
             
         if submitted:
             with st.spinner("Application de vos ajustements et recalcul des totaux..."):
-                time.sleep(2) # On attend 2 secondes pour l'effet
+                time.sleep(5) # On attend 5 secondes pour l'effet
             # On applique la marge et ajoute la main d'œuvre
             final_lines = []
             for line in st.session_state.raw_data.get('lignes_articles', []):
